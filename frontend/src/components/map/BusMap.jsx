@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { Clock, MapPin, Navigation } from 'lucide-react';
+import { Clock, MapPin, Navigation, Info, Activity } from 'lucide-react';
 import { getPrediction } from '../../services/api';
 
 // Fix for default Leaflet markers missing in React
@@ -29,229 +29,296 @@ const StopIcon = new L.Icon({
   popupAnchor: [0, -12],
 });
 
-// Dummy Data
-// Utility to mock distance calculation
+// STYLED CIRCULAR ROUTE (Delhi Central Loop)
+const DEFAULT_STOPS = [
+  { id: 1, name: 'Connaught Place (Central)', lat: 28.6328, lng: 77.2197 },
+  { id: 2, name: 'India Gate (East)', lat: 28.6129, lng: 77.2295 },
+  { id: 3, name: 'AIIMS (South)', lat: 28.5672, lng: 77.2100 },
+  { id: 4, name: 'Karol Bagh (West)', lat: 28.6441, lng: 77.1873 },
+];
+
+const DEFAULT_BUSES = [
+  { 
+    id: 101, 
+    route: 'Central Loop A', 
+    lat: 28.6328, 
+    lng: 77.2197, 
+    nextStopId: 2, 
+    speed: 0.00008, // Base speed per 100ms
+    isWaiting: false,
+    waitTimer: 0,
+    offset: { lat: 0.0002, lng: 0.0002 } // Prevent overlap
+  },
+  { 
+    id: 102, 
+    route: 'Central Loop B', 
+    lat: 28.5672, 
+    lng: 77.2100, 
+    nextStopId: 4, 
+    speed: 0.000075, 
+    isWaiting: false,
+    waitTimer: 0,
+    offset: { lat: -0.0002, lng: -0.0002 }
+  },
+];
+
 const calculateDistance = (lat1, lng1, lat2, lng2) => {
-  const R = 6371; // Earth's radius in km
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLng = (lng2 - lng1) * Math.PI / 180;
   const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
             Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
             Math.sin(dLng/2) * Math.sin(dLng/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c; // Distance in km
-};
-
-const MapUpdater = ({ center }) => {
-  const map = useMap();
-  useEffect(() => {
-    map.setView(center, map.getZoom());
-  }, [center, map]);
-  return null;
+  return R * c;
 };
 
 const BusMap = () => {
   const [buses, setBuses] = useState([]);
-  const [stops, setStops] = useState([]);
+  const [stops, setStops] = useState(DEFAULT_STOPS);
+  const [userLoc] = useState([28.6139, 77.2090]);
   
-  const [selectedBus, setSelectedBus] = useState(null);
-  const [etaResult, setEtaResult] = useState(null);
   const [isLoadingEta, setIsLoadingEta] = useState(false);
+  const [etaResult, setEtaResult] = useState(null);
   const [etaError, setEtaError] = useState(null);
-  const [userLoc, setUserLoc] = useState([28.6139, 77.2090]); // Default Delhi
+
+  const simulationIntervalRef = useRef(null);
 
   useEffect(() => {
-    // Load from local storage to sync with Admin Panel
-    const savedStops = JSON.parse(localStorage.getItem('urbanflow_stops')) || [
-      { id: 1, name: 'Central Station', lat: 28.6139, lng: 77.2090 },
-      { id: 2, name: 'Market Square', lat: 28.6239, lng: 77.2190 },
-      { id: 3, name: 'University Campus', lat: 28.6339, lng: 77.2290 },
-      { id: 4, name: 'Tech Park', lat: 28.6439, lng: 77.2390 },
-    ];
-    
-    const savedBuses = JSON.parse(localStorage.getItem('urbanflow_buses')) || [
-      { id: 101, route: 'Route A', lat: 28.6180, lng: 77.2140, nextStopId: 2, speed: 0.0005 },
-      { id: 102, route: 'Route B', lat: 28.6380, lng: 77.2340, nextStopId: 4, speed: 0.0004 },
-      { id: 103, route: 'Route A', lat: 28.6280, lng: 77.2240, nextStopId: 3, speed: 0.0006 },
-    ];
-    
-    setStops(savedStops);
-    setBuses(savedBuses);
+    // Initial data setup
+    setBuses(DEFAULT_BUSES);
 
-    // Get user geolocation
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-      (position) => setUserLoc([position.coords.latitude, position.coords.longitude]),
-      (error) => console.log("Geolocation error:", error),
-      { enableHighAccuracy: true }
-    );
-  }
-
-  // Simulate Bus Movement
-  const interval = setInterval(() => {
-    setBuses((prevBuses) => {
-      return prevBuses.map((bus) => {
-        // Use stops from state instead of STOPS constant
-        // Pass stops in to closure or use functional update cautiously, here we capture current stops
-        const targetStop = stops.find((s) => s.id === bus.nextStopId);
-        if (!targetStop) return bus;
-
-        const dx = targetStop.lat - bus.lat;
-          const dy = targetStop.lng - bus.lng;
-          const distanceToStop = Math.sqrt(dx * dx + dy * dy);
-
-          // If bus reached the stop, loop it back to the start for simulation purposes
-          if (distanceToStop < 0.001) {
-            let nextId = bus.nextStopId + 1;
-            // Ensure nextId exists in our stops array, otherwise wrap or fallback
-            if (!stops.find(s => s.id === nextId)) {
-               nextId = stops[0]?.id || bus.nextStopId;
+    // Start high-frequency simulation (100ms)
+    simulationIntervalRef.current = setInterval(() => {
+      setBuses((prevBuses) => {
+        return prevBuses.map((bus) => {
+          // 1. Handle Waiting State
+          if (bus.isWaiting) {
+            const newTimer = bus.waitTimer - 100;
+            if (newTimer <= 0) {
+              // Time to move to next stop
+              const currentIndex = DEFAULT_STOPS.findIndex(s => s.id === bus.nextStopId);
+              const nextIndex = (currentIndex + 1) % DEFAULT_STOPS.length;
+              const nextStop = DEFAULT_STOPS[nextIndex];
+              
+              return { 
+                ...bus, 
+                isWaiting: false, 
+                waitTimer: 0, 
+                nextStopId: nextStop.id 
+              };
             }
-            return { ...bus, nextStopId: nextId };
+            return { ...bus, waitTimer: newTimer };
           }
 
-          // Move bus towards the target stop
-          const moveX = (dx / distanceToStop) * bus.speed;
-          const moveY = (dy / distanceToStop) * bus.speed;
+          // 2. Handle Movement State
+          const targetStop = DEFAULT_STOPS.find(s => s.id === bus.nextStopId);
+          if (!targetStop) return bus;
+
+          const dx = targetStop.lat - bus.lat;
+          const dy = targetStop.lng - bus.lng;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          // Arrived at destination?
+          if (dist < 0.0005) {
+            return { 
+              ...bus, 
+              lat: targetStop.lat, 
+              lng: targetStop.lng, 
+              isWaiting: true, 
+              waitTimer: 2500 + Math.random() * 1000 // Randomized 2.5s-3.5s
+            };
+          }
+
+          // Interpolation movement
+          const currentSpeed = bus.speed * (0.9 + Math.random() * 0.2); // +/- 10% speed variation
+          const moveX = (dx / dist) * currentSpeed;
+          const moveY = (dy / dist) * currentSpeed;
 
           return {
             ...bus,
             lat: bus.lat + moveX,
             lng: bus.lng + moveY,
           };
+        });
       });
-    });
-  }, 1000); // Update every second
+    }, 100);
 
-  return () => clearInterval(interval);
-}, [stops]); // Re-run effect if stops change
+    return () => {
+      if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current);
+    };
+  }, []);
 
-const handleBusClick = async (bus) => {
-    setSelectedBus(bus);
+  const handleBusClick = async (bus) => {
     setIsLoadingEta(true);
     setEtaResult(null);
     setEtaError(null);
 
-    const targetStop = stops.find(s => s.id === bus.nextStopId);
+    const targetStop = DEFAULT_STOPS.find(s => s.id === bus.nextStopId);
     if (!targetStop) {
-        setEtaError("Target stop data unavailable");
-        setIsLoadingEta(false);
-        return;
+      setEtaError("Stop data missing");
+      setIsLoadingEta(false);
+      return;
     }
-    
-    const distanceKm = calculateDistance(bus.lat, bus.lng, targetStop.lat, targetStop.lng);
+
+    const dist = calculateDistance(bus.lat, bus.lng, targetStop.lat, targetStop.lng);
 
     try {
-      // Create payload matching what ml-service main.py expects
       const payload = {
         Route_Name: bus.route,
-        Distance_km: distanceKm,
-        Traffic_Density: 6.5, // Mock baseline
-        Weather: 'Clear',     // Mock baseline
-        Is_Peak_Hour: new Date().getHours() >= 17 && new Date().getHours() <= 20 ? 1 : 0
+        Distance_km: dist,
+        Traffic_Density: 5.8,
+        Weather: 'Clear',
+        Is_Peak_Hour: 0
       };
 
       const res = await getPrediction(payload);
-      
-      if (res.success && res.data) {
-         setEtaResult({
-           time: res.data.predicted_travel_time.toFixed(1),
-           distance: distanceKm.toFixed(2),
-           stopName: targetStop.name
-         });
-      } else {
-         throw new Error("Invalid response from server");
+      if (res.success) {
+        setEtaResult({
+          time: res.data.predicted_travel_time.toFixed(1),
+          distance: dist.toFixed(2),
+          stopName: targetStop.name
+        });
       }
-      
-    } catch (error) {
-      console.error(error);
-      setEtaError(error.message);
+    } catch (err) {
+      setEtaError("AI Service unavailable");
     } finally {
       setIsLoadingEta(false);
     }
   };
 
   return (
-    <div className="relative w-full h-[calc(100vh-64px)] overflow-hidden rounded-xl shadow-inner border border-slate-200">
+    <div className="relative w-full h-full rounded-2xl overflow-hidden border border-slate-200 shadow-2xl bg-slate-50">
       <MapContainer 
         center={userLoc} 
-        zoom={13} 
+        zoom={12} 
         className="w-full h-full z-0"
+        zoomControl={false}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        
-        {/* Render Stops */}
-        {stops.map((stop) => (
-          <Marker key={`stop-${stop.id}`} position={[stop.lat, stop.lng]} icon={StopIcon}>
+
+        {/* STATIONS */}
+        {stops.map(stop => (
+          <Marker key={stop.id} position={[stop.lat, stop.lng]} icon={StopIcon}>
             <Popup>
-              <span className="font-semibold text-slate-800">{stop.name}</span>
+              <div className="font-bold text-slate-800">{stop.name}</div>
+              <div className="text-xs text-slate-500 font-medium">UrbanFlow Station #{stop.id}</div>
             </Popup>
           </Marker>
         ))}
 
-        {/* Render Buses */}
-        {buses.map((bus) => (
+        {/* BUSES */}
+        {buses.map(bus => (
           <Marker 
-            key={`bus-${bus.id}`} 
-            position={[bus.lat, bus.lng]} 
+            key={bus.id} 
+            position={[bus.lat + bus.offset.lat, bus.lng + bus.offset.lng]} 
             icon={BusIcon}
-            eventHandlers={{
-              click: () => handleBusClick(bus),
-            }}
+            eventHandlers={{ click: () => handleBusClick(bus) }}
           >
             <Popup className="bus-popup">
-              <div className="p-1 w-48">
-                <h3 className="font-bold text-lg text-primary-700 flex items-center gap-2 mb-2 border-b pb-1">
-                  <Navigation size={16} /> Bus {bus.id}
-                </h3>
-                <p className="text-sm text-slate-600 mb-2">Route: {bus.route}</p>
+              <div className="p-2 w-52">
+                <div className="flex items-center justify-between mb-3 border-b pb-2">
+                  <h3 className="font-extrabold text-primary-600 flex items-center gap-1.5">
+                    <Navigation size={14} /> BUS {bus.id}
+                  </h3>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${bus.isWaiting ? 'bg-amber-100 text-amber-700 animate-pulse' : 'bg-emerald-100 text-emerald-700'}`}>
+                    {bus.isWaiting ? 'At Station' : 'Moving'}
+                  </span>
+                </div>
                 
+                <p className="text-xs text-slate-600 mb-3 flex items-center gap-1.5 bg-slate-50 p-1.5 rounded-lg">
+                  <Activity size={12} className="text-slate-400" />
+                  Route: <span className="font-bold text-slate-800">{bus.route}</span>
+                </p>
+
                 {isLoadingEta ? (
-                  <div className="flex items-center justify-center p-2 text-primary-500">
-                    <span className="animate-pulse flex items-center gap-2"><Clock size={16} /> Calculating ETA...</span>
-                  </div>
-                ) : etaError ? (
-                  <p className="text-xs text-red-500 bg-red-50 p-2 rounded">{etaError}</p>
+                   <div className="flex flex-col items-center py-2 gap-2">
+                      <div className="w-5 h-5 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Crunching Data...</span>
+                   </div>
                 ) : etaResult ? (
-                  <div className="bg-primary-50 p-2 rounded-lg border border-primary-100">
-                    <div className="flex items-center gap-2 text-slate-700 text-sm mb-1">
-                      <MapPin size={14} className="text-primary-500" />
-                      <span>Next: <span className="font-semibold">{etaResult.stopName}</span></span>
+                  <div className="bg-primary-50 p-2.5 rounded-xl border border-primary-100 animate-fade-in">
+                    <div className="text-center mb-2 border-b border-primary-100 pb-1.5">
+                       <span className="text-[10px] text-primary-400 font-bold uppercase tracking-widest block mb-0.5">NEXT STOP</span>
+                       <span className="text-sm font-extrabold text-primary-900 leading-tight">{etaResult.stopName}</span>
                     </div>
-                    <div className="flex justify-between items-end mt-2">
-                       <div>
-                         <span className="text-xs text-slate-500 block">Distance</span>
-                         <span className="font-semibold text-slate-800">{etaResult.distance} km</span>
-                       </div>
-                       <div className="text-right">
-                         <span className="text-xs text-slate-500 block">ETA</span>
-                         <span className="font-bold tracking-tight text-xl text-primary-600">{etaResult.time} <span className="text-sm font-normal">min</span></span>
-                       </div>
+                    <div className="flex justify-between items-center px-1">
+                      <div className="text-left">
+                        <span className="text-[9px] text-slate-500 font-bold block">DIST</span>
+                        <span className="text-xs font-bold text-slate-800">{etaResult.distance}km</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[9px] text-slate-500 font-bold block">PRED ETA</span>
+                        <span className="text-lg font-black text-primary-600 leading-none">{etaResult.time}<span className="text-[10px] font-normal ml-0.5">min</span></span>
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-500 info">Click to get prediction</p>
+                  <button onClick={() => handleBusClick(bus)} className="w-full btn-primary text-[10px] py-2 flex items-center justify-center gap-2">
+                    <Clock size={12} /> GET LIVE PREDICTION
+                  </button>
                 )}
               </div>
             </Popup>
           </Marker>
         ))}
       </MapContainer>
-      
-      {/* Legend Overlay */}
-      <div className="absolute top-4 right-4 z-10 glass-panel p-4 text-sm w-48">
-        <h4 className="font-bold text-slate-800 mb-2 border-b border-slate-200 pb-1">Legend</h4>
-        <div className="flex items-center gap-3 mb-2">
-          <img src="https://cdn-icons-png.flaticon.com/512/3448/3448339.png" className="w-6 h-6" alt="bus" />
-          <span className="text-slate-600">Active Bus</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <img src="https://cdn-icons-png.flaticon.com/512/819/819814.png" className="w-5 h-5 ml-0.5" alt="stop" />
-          <span className="text-slate-600">Bus Stop</span>
-        </div>
+
+      {/* OVERLAYS */}
+      <div className="absolute top-6 right-6 z-[400] flex flex-col gap-3">
+          <div className="glass-panel p-4 shadow-2xl border border-white/50 w-52 animate-slide-in">
+              <h4 className="flex items-center gap-2 text-xs font-black text-slate-800 uppercase tracking-widest mb-4 border-b pb-2">
+                  <Activity size={14} className="text-primary-500" /> SYSTEM STATUS
+              </h4>
+              <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-500">FLEET SIZE</span>
+                      <span className="text-xs font-black text-slate-900 px-2 py-0.5 bg-slate-100 rounded-md">2 BUSES</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-500">COVERAGE</span>
+                      <span className="text-xs font-black text-slate-900 px-2 py-0.5 bg-slate-100 rounded-md">4 STATIONS</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-slate-500">UPDATES</span>
+                      <span className="flex items-center gap-1.5 text-xs font-black text-emerald-600">
+                          <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span> 100MS TICKS
+                      </span>
+                  </div>
+              </div>
+          </div>
+          
+          <div className="glass-panel p-4 shadow-2xl border border-white/50 w-52 animate-slide-in delay-200">
+             <h4 className="text-[10px] font-black text-slate-800 uppercase tracking-widest mb-3">LEGEND</h4>
+             <div className="space-y-2.5">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shadow-sm">
+                        <img src="https://cdn-icons-png.flaticon.com/512/3448/3448339.png" className="w-5 h-5" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-600 uppercase tracking-tight">Active Bus</span>
+                </div>
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center shadow-sm">
+                        <img src="https://cdn-icons-png.flaticon.com/512/819/819814.png" className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-600 uppercase tracking-tight">Station</span>
+                </div>
+             </div>
+          </div>
+      </div>
+
+      {/* BOTTOM ACTION */}
+      <div className="absolute bottom-6 left-6 z-[400] animate-fade-in delay-500">
+          <div className="glass-panel px-5 py-3 shadow-2xl flex items-center gap-4 border-l-4 border-primary-500">
+              <Info size={18} className="text-primary-500" />
+              <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase leading-none">REAL-TIME TELEMETRY</p>
+                  <p className="text-[13px] font-bold text-slate-800 tracking-tight">Buses are currently navigating the Central Delhi loop.</p>
+              </div>
+          </div>
       </div>
     </div>
   );

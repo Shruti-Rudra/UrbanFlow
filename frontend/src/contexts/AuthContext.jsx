@@ -1,130 +1,166 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
+import axios from 'axios';
 
 const AuthContext = createContext(null);
+
+// Configure axios base URL and credentials
+const api = axios.create({
+  baseURL: 'http://localhost:5000/api',
+  withCredentials: true // Important for cookies (Refresh Token)
+});
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  
-  // Temporary state for OTP flow
-  const [tempUser, setTempUser] = useState(null);
-  const [generatedOTP, setGeneratedOTP] = useState(null);
+  const [accessToken, setAccessToken] = useState(null);
 
+  // Initial load: Try to refresh token if we have a refresh cookie
   useEffect(() => {
-    // Check localStorage for an active session
-    const storedUser = localStorage.getItem('urbanflow_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-
-    // Check sessionStorage for ongoing OTP verifications (survives page refresh)
-    const storedTempUser = sessionStorage.getItem('urbanflow_temp_user');
-    const storedOTP = sessionStorage.getItem('urbanflow_temp_otp');
-    if (storedTempUser && storedOTP) {
-      setTempUser(JSON.parse(storedTempUser));
-      setGeneratedOTP(storedOTP);
-    }
-    
-    setLoading(false);
+    const initAuth = async () => {
+      try {
+        const response = await api.post('/auth/refresh');
+        const { user, accessToken } = response.data;
+        setUser(user);
+        setAccessToken(accessToken);
+        // Setup axios interceptor for the new token
+        setupInterceptors(accessToken);
+      } catch (error) {
+        // No valid refresh token, user stays null
+        console.log('No active session found');
+      } finally {
+        setLoading(false);
+      }
+    };
+    initAuth();
   }, []);
 
-  // Helper to generate a 6-digit OTP
-  const generateOTP = () => {
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    console.log(`[SIMULATED SMS/EMAIL] Your UrbanFlow OTP is: ${otp}`);
-    return otp;
-  };
-
-  const requestLogin = (identifier) => {
-    const otp = generateOTP();
-    const mockRole = identifier === 'admin@urbanflow.com' ? 'admin' : 'user';
-    
-    const newTempUser = { 
-      id: Date.now(),
-      identifier,
-      name: identifier.includes('@') ? identifier.split('@')[0] : 'Commuter',
-      role: mockRole
-    };
-    
-    // Update local state
-    setTempUser(newTempUser);
-    setGeneratedOTP(otp);
-    
-    // Persist to sessionStorage so it survives page reloads during the verification step
-    sessionStorage.setItem('urbanflow_temp_user', JSON.stringify(newTempUser));
-    sessionStorage.setItem('urbanflow_temp_otp', otp);
-    
-    return new Promise(resolve => setTimeout(() => resolve(true), 600));
-  };
-
-  const requestRegister = (name, identifier) => {
-    const otp = generateOTP();
-    
-    const newTempUser = { 
-      id: Date.now(),
-      name,
-      identifier,
-      role: 'user'
-    };
-    
-    setTempUser(newTempUser);
-    setGeneratedOTP(otp);
-    
-    sessionStorage.setItem('urbanflow_temp_user', JSON.stringify(newTempUser));
-    sessionStorage.setItem('urbanflow_temp_otp', otp);
-    
-    return new Promise(resolve => setTimeout(() => resolve(true), 600));
-  };
-
-  const verifyOTP = (enteredOTP) => {
-    return new Promise((resolve, reject) => {
-      console.log(`Verifying: Entered [${enteredOTP}] vs Generated [${generatedOTP}]`);
-      
-      setTimeout(() => {
-        if (enteredOTP === generatedOTP && tempUser) {
-          // Commit to persistent state
-          setUser(tempUser);
-          localStorage.setItem('urbanflow_user', JSON.stringify(tempUser));
-          
-          // Clear temp state
-          setTempUser(null);
-          setGeneratedOTP(null);
-          sessionStorage.removeItem('urbanflow_temp_user');
-          sessionStorage.removeItem('urbanflow_temp_otp');
-          
-          resolve(true);
-        } else {
-          reject(new Error(`Invalid OTP. Please check the code and try again.`));
+  // Interceptor to add Bearer token to all requests
+  const setupInterceptors = (token) => {
+    api.interceptors.request.use(
+      (config) => {
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`;
         }
-      }, 800);
-    });
+        return config;
+      },
+      (error) => Promise.reject(error)
+    );
   };
 
-  const resendOTP = () => {
-    if (!tempUser) return false;
-    const otp = generateOTP();
-    
-    setGeneratedOTP(otp);
-    sessionStorage.setItem('urbanflow_temp_otp', otp);
-    
-    return otp; // Return the new OTP so the UI can display it
+  /**
+   * Register a new user
+   */
+  const register = async (userData) => {
+    try {
+      const response = await api.post('/auth/register', userData);
+      const { user, accessToken } = response.data;
+      setUser(user);
+      setAccessToken(accessToken);
+      setupInterceptors(accessToken);
+      return { success: true };
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Registration failed');
+    }
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('urbanflow_user');
+  /**
+   * Login with Password
+   */
+  const login = async (identifier, password) => {
+    try {
+      const response = await api.post('/auth/login', { identifier, password });
+      const { user, accessToken } = response.data;
+      setUser(user);
+      setAccessToken(accessToken);
+      setupInterceptors(accessToken);
+      return { success: true };
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Login failed');
+    }
+  };
+
+  /**
+   * Request OTP
+   */
+  const requestOTP = async (identifier) => {
+    try {
+      const response = await api.post('/auth/otp/request', { identifier });
+      return { success: true, message: response.data.message };
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'OTP request failed');
+    }
+  };
+
+  /**
+   * Verify OTP
+   */
+  const verifyOTP = async (identifier, otp) => {
+    try {
+      const response = await api.post('/auth/otp/verify', { identifier, otp });
+      const { user, accessToken } = response.data;
+      setUser(user);
+      setAccessToken(accessToken);
+      setupInterceptors(accessToken);
+      return { success: true };
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'OTP verification failed');
+    }
+  };
+
+  /**
+   * Forgot Password
+   */
+  const forgotPassword = async (email) => {
+    try {
+      const response = await api.post('/auth/forgot-password', { email });
+      return { success: true, message: response.data.message };
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Request failed');
+    }
+  };
+
+  /**
+   * Reset Password
+   */
+  const resetPassword = async (token, password) => {
+    try {
+      const response = await api.put(`/auth/reset-password/${token}`, { password });
+      const { user, accessToken } = response.data;
+      setUser(user);
+      setAccessToken(accessToken);
+      setupInterceptors(accessToken);
+      return { success: true };
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Reset failed');
+    }
+  };
+
+  /**
+   * Logout
+   */
+  const logout = async () => {
+    try {
+      await api.get('/auth/logout');
+      setUser(null);
+      setAccessToken(null);
+      delete api.defaults.headers.common['Authorization'];
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   const value = {
     user,
-    tempUser,
-    generatedOTP, // Exposed for testing UI display
     loading,
-    requestLogin,
-    requestRegister,
+    accessToken,
+    register,
+    login,
+    requestOTP,
     verifyOTP,
-    resendOTP,
-    logout
+    forgotPassword,
+    resetPassword,
+    logout,
+    api // Expose api for other services to use with auth
   };
 
   return (

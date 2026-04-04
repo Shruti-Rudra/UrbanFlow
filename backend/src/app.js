@@ -1,14 +1,21 @@
 const express = require('express');
 const cors = require('cors');
-const { errorHandler } = require('./middlewares/errorHandler');
+const cookieParser = require('cookie-parser');
+const securityMiddleware = require('./middlewares/securityMiddleware');
+const errorHandler = require('./middlewares/errorHandler');
 
 const healthRoutes = require('./routes/healthRoutes');
 const predictRoutes = require('./routes/predictRoutes');
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 
-// Middlewares
-app.use(cors());
+// Security Middlewares
+// securityMiddleware(app);
+
+// Standard Middlewares
+app.use(cors({ origin: true, credentials: true })); // Enable credentials for cookies
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -17,12 +24,13 @@ app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'UrbanFlow Backend API is running',
-    endpoints: ['/api/health', '/api/predict']
+    endpoints: ['/api/health', '/api/predict', '/api/auth']
   });
 });
 
 app.use('/api/health', healthRoutes);
 app.use('/api/predict', predictRoutes);
+app.use('/api/auth', authRoutes);
 
 // 404 handler
 app.use((req, res, next) => {
