@@ -7,6 +7,7 @@ const errorHandler = require('./middlewares/errorHandler');
 const healthRoutes = require('./routes/healthRoutes');
 const predictRoutes = require('./routes/predictRoutes');
 const authRoutes = require('./routes/authRoutes');
+const transitRoutes = require('./routes/transitRoutes');
 
 const app = express();
 
@@ -31,6 +32,8 @@ app.get('/', (req, res) => {
 app.use('/api/health', healthRoutes);
 app.use('/api/predict', predictRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/transit', transitRoutes);
+app.use('/auth', authRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

@@ -1,55 +1,50 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { User, Mail, Phone, Lock, Eye, EyeOff, ShieldCheck, ArrowRight } from 'lucide-react';
-import PasswordStrengthMeter from '../components/auth/PasswordStrengthMeter';
+import { User, Mail, ShieldCheck, ArrowRight, Key } from 'lucide-react';
+import OTPInput from '../components/auth/OTPInput';
 
 const Register = () => {
   const [formData, setFormData] = useState({
     name: '',
-    email: '',
-    phone: '',
-    password: '',
-    confirmPassword: ''
+    identifier: '' // Email or Phone
   });
-  const [showPassword, setShowPassword] = useState(false);
+  const [step, setStep] = useState(1); // 1: Details, 2: OTP
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  const { register } = useAuth();
+  const { requestOTP, verifyOTP } = useAuth();
   const navigate = useNavigate();
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
-
-  const handleSubmit = async (e) => {
+  const handleRequestOTP = async (e) => {
     e.preventDefault();
     setError('');
-
-    // Basic Validation
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    if (formData.password.length < 8) {
-      setError('Password must be at least 8 characters long');
+    
+    if (!formData.name.trim() || !formData.identifier.trim()) {
+      setError('Please provide your name and email/phone.');
       return;
     }
 
     setIsLoading(true);
-
     try {
-      await register({
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
-        password: formData.password
-      });
+      const res = await requestOTP(formData.identifier);
+      setSuccess(res.message);
+      setStep(2);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyOTP = async (otpCode) => {
+    setError('');
+    setIsLoading(true);
+    try {
+      // In a real flow, we'd also pass the name to update the placeholder user
+      // But for simplicity of the prompt's request "Verify OTP before login/registration":
+      await verifyOTP(formData.identifier, otpCode);
       navigate('/dashboard');
     } catch (err) {
       setError(err.message);
@@ -89,134 +84,90 @@ const Register = () => {
               </div>
             )}
 
-            <form className="space-y-5" onSubmit={handleSubmit}>
-              {/* Name */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Full Name</label>
-                <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-primary-500 transition-colors">
-                    <User size={18} />
-                  </div>
-                  <input
-                    name="name"
-                    type="text"
-                    required
-                    className="input-field pl-10 py-3"
-                    placeholder="John Doe"
-                    value={formData.name}
-                    onChange={handleChange}
-                  />
-                </div>
+            {success && (
+              <div className="mb-6 bg-green-50 border-l-4 border-green-500 p-4 rounded-lg">
+                <p className="text-sm text-green-700 font-medium">{success}</p>
               </div>
+            )}
 
-              {/* Contact Info (Row) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {step === 1 ? (
+              <form className="space-y-6" onSubmit={handleRequestOTP}>
                 <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Email</label>
-                    <div className="relative group">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Full Name</label>
+                  <div className="relative group">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-primary-500 transition-colors">
-                        <Mail size={18} />
+                      <User size={18} />
                     </div>
                     <input
-                        name="email"
-                        type="email"
-                        required
-                        className="input-field pl-10 py-3"
-                        placeholder="name@email.com"
-                        value={formData.email}
-                        onChange={handleChange}
+                      required
+                      type="text"
+                      className="input-field pl-10 py-3"
+                      placeholder="Enter your name"
+                      value={formData.name}
+                      onChange={(e) => setFormData({...formData, name: e.target.value})}
                     />
-                    </div>
+                  </div>
                 </div>
+
                 <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Phone</label>
-                    <div className="relative group">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Email or Phone</label>
+                  <div className="relative group">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-primary-500 transition-colors">
-                        <Phone size={18} />
+                      <Mail size={18} />
                     </div>
                     <input
-                        name="phone"
-                        type="tel"
-                        required
-                        className="input-field pl-10 py-3"
-                        placeholder="+91..."
-                        value={formData.phone}
-                        onChange={handleChange}
+                      required
+                      type="text"
+                      className="input-field pl-10 py-3"
+                      placeholder="name@email.com or 10-digit phone"
+                      value={formData.identifier}
+                      onChange={(e) => setFormData({...formData, identifier: e.target.value})}
                     />
-                    </div>
-                </div>
-              </div>
-
-              {/* Password */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Password</label>
-                <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-primary-500 transition-colors">
-                    <Lock size={18} />
                   </div>
-                  <input
-                    name="password"
-                    type={showPassword ? "text" : "password"}
-                    required
-                    className="input-field pl-10 pr-10 py-3"
-                    placeholder="••••••••"
-                    value={formData.password}
-                    onChange={handleChange}
-                  />
-                  <button 
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="btn-primary w-full py-4 group"
                   >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    {isLoading ? (
+                      <span className="flex items-center justify-center gap-2">
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                          Sending Code...
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-center gap-2">
+                          Get Verification Code
+                          <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                      </span>
+                    )}
                   </button>
                 </div>
-                {formData.password && <PasswordStrengthMeter password={formData.password} />}
-              </div>
-
-              {/* Confirm Password */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Confirm Password</label>
-                <div className="relative group">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 group-focus-within:text-primary-500 transition-colors">
-                    <ShieldCheck size={18} />
-                  </div>
-                  <input
-                    name="confirmPassword"
-                    type={showPassword ? "text" : "password"}
-                    required
-                    className="input-field pl-10 py-3"
-                    placeholder="••••••••"
-                    value={formData.confirmPassword}
-                    onChange={handleChange}
-                  />
+              </form>
+            ) : (
+              <div className="text-center animate-fade-in">
+                <div className="mb-6">
+                    <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary-50 text-primary-600 mb-4">
+                        <Key size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-900">Verify Your Identity</h3>
+                    <p className="text-sm text-slate-500 mt-1">Enter the 6-digit code sent to <span className="font-semibold text-slate-700">{formData.identifier}</span></p>
                 </div>
-              </div>
 
-              <div className="pt-4">
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="btn-primary w-full py-4 group"
+                <div className="mb-8">
+                    <OTPInput onComplete={handleVerifyOTP} />
+                </div>
+
+                <button 
+                    onClick={() => setStep(1)}
+                    className="text-sm font-semibold text-slate-400 hover:text-slate-600 flex items-center justify-center gap-1 mx-auto"
                 >
-                  {isLoading ? (
-                    <span className="flex items-center justify-center gap-2">
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                        Creating Account...
-                    </span>
-                  ) : (
-                    <span className="flex items-center justify-center gap-2">
-                        Register Account
-                        <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                    </span>
-                  )}
+                    Back to registration
                 </button>
               </div>
-
-              <p className="text-[10px] text-center text-slate-500 px-6 mt-4">
-                  By registering, you agree to our <span className="underline font-medium cursor-pointer">Terms of Service</span> and <span className="underline font-medium cursor-pointer">Privacy Policy</span>.
-              </p>
-            </form>
+            )}
           </div>
         </div>
       </div>

@@ -84,7 +84,7 @@ export const AuthProvider = ({ children }) => {
    */
   const requestOTP = async (identifier) => {
     try {
-      const response = await api.post('/auth/otp/request', { identifier });
+      const response = await api.post('/auth/request-otp', { identifier });
       return { success: true, message: response.data.message };
     } catch (error) {
       throw new Error(error.response?.data?.message || 'OTP request failed');
@@ -96,7 +96,7 @@ export const AuthProvider = ({ children }) => {
    */
   const verifyOTP = async (identifier, otp) => {
     try {
-      const response = await api.post('/auth/otp/verify', { identifier, otp });
+      const response = await api.post('/auth/verify-otp', { identifier, otp });
       const { user, accessToken } = response.data;
       setUser(user);
       setAccessToken(accessToken);

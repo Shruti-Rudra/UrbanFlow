@@ -11,31 +11,27 @@ exports.protect = async (req, res, next) => {
     req.headers.authorization &&
     req.headers.authorization.startsWith('Bearer')
   ) {
-    // Set token from Bearer token in header
     token = req.headers.authorization.split(' ')[1];
   }
-  // Check for presence of token in cookies if needed (alternative)
-  // else if (req.cookies.token) {
-  //   token = req.cookies.token;
-  // }
 
   if (!token) {
     return res.status(401).json({ success: false, message: 'Not authorized to access this route' });
   }
 
   try {
-    // Verify token
     const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
-    req.user = await User.findById(decoded.id);
+    // Use Mongoose (not MSSQL)
+    const user = await User.findById(decoded.id);
 
-    if (!req.user) {
-      return res.status(401).json({ success: false, message: 'User not found in data store' });
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'User not found' });
     }
 
+    req.user = user;
     next();
   } catch (error) {
-    return res.status(401).json({ success: false, message: 'Not authorized to access this route' });
+    return res.status(401).json({ success: false, message: 'Not authorized – invalid or expired token' });
   }
 };
 
@@ -47,7 +43,7 @@ exports.authorize = (...roles) => {
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
-        message: `User role ${req.user.role} is not authorized to access this route`
+        message: `User role '${req.user.role}' is not allowed to access this route`
       });
     }
     next();

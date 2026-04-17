@@ -1,7 +1,7 @@
 const helmet = require('helmet');
-const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
 const hpp = require('hpp');
+const xssClean = require('xss-clean');
 
 /**
  * Configure all security middlewares
@@ -10,8 +10,8 @@ const securityMiddleware = (app) => {
   // Set security HTTP headers
   app.use(helmet());
 
-  // Prevent NoSQL injection
-  app.use(mongoSanitize());
+  // Basic XSS sanitation
+  app.use(xssClean());
 
   // Prevent HTTP Parameter Pollution
   app.use(hpp());
