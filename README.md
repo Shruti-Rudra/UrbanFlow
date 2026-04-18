@@ -108,7 +108,28 @@ The app follows a **Premium Glassmorphism** design system with:
 - **Responsive Navbar**: Context-aware branding for Surat Metropolitan.
 - **Smart Sidebar**: Houses the search hub and navigation tree.
 - **Live Map**: Real-time vector-based vehicle interpolation.
+  
+## 9. run the project
+**in cmd run this it will open the jupyter notbook**
+pip install notebook pandas scikit-learn matplotlib seaborn
+jupyter notebook
 
+**Run the project**
+cd ml-service
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+
+cd backend
+npm install 
+npm start
+
+cd frontend
+npm install 
+npm run dev
+
+admin 
+Email : admin@urbanflow.com
+Password : password123
 ---
 
 **UrbanFlow Technical Documentation v1.2 | 2026**
